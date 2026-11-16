@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Elektronika va Ekran Skaneri</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0b1120; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .btn { background: #10b981; color: white; border: none; padding: 12px 22px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 15px; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .card { background: #1e293b; padding: 18px; border-radius: 12px; border: 1px solid #334155; text-align: center; }
+        .card h3 { margin: 0 0 8px 0; font-size: 13px; color: #94a3b8; }
+        .card .num { font-size: 32px; font-weight: bold; color: #38bdf8; }
+        .camera-box { background: #1e293b; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #334155; }
+        .video-wrapper { position: relative; display: inline-block; max-width: 100%; }
+        video, canvas { border-radius: 8px; max-width: 100%; height: auto; }
+        canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        #status { color: #facc15; font-size: 14px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div>
+            <h2 style="margin:0;">📷 AI Elektronika Skaneri</h2>
+            <div id="status">⏳ AI modeli yuklanmoqda, biroz kuting...</div>
+        </div>
+        <button id="startBtn" class="btn" onclick="startCamera()" disabled>Kamerani Yoqish</button>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>✅ Jami Yoniq Qurilmalar</h3>
+            <div class="num" id="total-active" style="color:#10b981;">0</div>
+        </div>
+        <div class="card">
+            <h3>📱 Telefonlar (Yoniq)</h3>
+            <div class="num" id="phone-count">0</div>
+        </div>
+        <div class="card">
+            <h3>📺 TV / Monitor (Yoniq)</h3>
+            <div class="num" id="tv-count">0</div>
+        </div>
+        <div class="card">
+            <h3>💻 Noutbuk (Yoniq)</h3>
+            <div class="num" id="laptop-count">0</div>
+        </div>
+    </div>
+
+    <div class="camera-box">
+        <div class="video-wrapper">
+            <video id="video" width="640" height="480" autoplay muted playsinline></video>
+            <canvas id="overlay" width="640" height="480"></canvas>
+        </div>
+        <p style="color:#94a3b8; font-size:13px; margin-top:10px;">
+            🟢 <b>Yashil:</b> Ekrani yoniq (Hisoblandi) &nbsp;|&nbsp; 🔴 <b>Qizil:</b> Ekrani o'chiq (Hisoblanmadi)
+        </p>
+    </div>
+</div>
+
+<script>
+    let model = null;
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const hiddenCanvas = document.createElement('canvas');
+    const hiddenCtx = hiddenCanvas.getContext('2d');
+
+    const TARGETS = {
+        'cell phone': 'Telefon',
+        'tv': 'TV / Monitor',
+        'laptop': 'Noutbuk'
+    };
+
+    cocoSsd.load().then(loadedModel => {
+        model = loadedModel;
+        document.getElementById('status').innerText = "✅ AI tayyor! Kamerani yoqishingiz mumkin.";
+        document.getElementById('status').style.color = "#10b981";
+        document.getElementById('startBtn').disabled = false;
+    });
+
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" },
+                audio: false
+            });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                overlay.width = video.videoWidth;
+                overlay.height = video.videoHeight;
+                hiddenCanvas.width = video.videoWidth;
+                hiddenCanvas.height = video.videoHeight;
+                detectFrame();
+            };
+        } catch (err) {
+            alert("Kamerani ochib bo'lmadi: " + err.message);
+        }
+    }
+
+    function isScreenBright(x, y, w, h) {
+        const marginX = Math.floor(w * 0.15);
+        const marginY = Math.floor(h * 0.15);
+        const sx = Math.max(0, Math.floor(x + marginX));
+        const sy = Math.max(0, Math.floor(y + marginY));
+        const sw = Math.max(1, Math.floor(w - marginX * 2));
+        const sh = Math.max(1, Math.floor(h - marginY * 2));
+
+        const imgData = hiddenCtx.getImageData(sx, sy, sw, sh).data;
+        let totalBrightness = 0;
+        let brightPixels = 0;
+        const pixelCount = imgData.length / 4;
+
+        for (let i = 0; i < imgData.length; i += 4) {
+            const brightness = (imgData[i] * 0.299 + imgData[i + 1] * 0.587 + imgData[i + 2] * 0.114);
+            totalBrightness += brightness;
+            if (brightness > 80) brightPixels++;
+        }
+
+        const avgBrightness = totalBrightness / pixelCount;
+        const brightRatio = brightPixels / pixelCount;
+
+        return (avgBrightness > 60) || (brightRatio > 0.25);
+    }
+
+    async function detectFrame() {
+        if (video.readyState === 4 && model) {
+            hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+            const predictions = await model.detect(video);
+
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            let phones = 0, tvs = 0, laptops = 0;
+
+            predictions.forEach(pred => {
+                if (TARGETS[pred.class] && pred.score > 0.45) {
+                    const [x, y, w, h] = pred.bbox;
+                    const screenOn = isScreenBright(x, y, w, h);
+
+                    if (screenOn) {
+                        if (pred.class === 'cell phone') phones++;
+                        if (pred.class === 'tv') tvs++;
+                        if (pred.class === 'laptop') laptops++;
+                    }
+
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = screenOn ? '#10b981' : '#ef4444';
+                    ctx.strokeRect(x, y, w, h);
+
+                    ctx.fillStyle = screenOn ? '#10b981' : '#ef4444';
+                    ctx.font = 'bold 15px sans-serif';
+                    const label = `${TARGETS[pred.class]} (${screenOn ? "YONIQ" : "O'CHIQ"})`;
+                    ctx.fillText(label, x, y > 20 ? y - 8 : y + 20);
+                }
+            });
+
+            document.getElementById('phone-count').innerText = phones;
+            document.getElementById('tv-count').innerText = tvs;
+            document.getElementById('laptop-count').innerText = laptops;
+            document.getElementById('total-active').innerText = phones + tvs + laptops;
+        }
+        requestAnimationFrame(detectFrame);
+    }
+</script>
+</body>
+</html>
